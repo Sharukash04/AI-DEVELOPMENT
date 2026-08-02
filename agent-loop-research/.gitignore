@@ -1,5 +1,7 @@
-echo ".env" >> .gitignore
-echo "__pycache__/" >> .gitignore
-echo "*.pyc" >> .gitignore
-echo "iteration_log.json" >> .gitignore
-echo "venv/" >> .gitignore
+venv/
+.env
+__pycache__/
+*.pyc
+iteration_log.json
+.env
+**/.env
