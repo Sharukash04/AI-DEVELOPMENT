@@ -17,7 +17,7 @@ class ResearchAgent:
             raise ValueError("Please set GOOGLE_API_KEY in .env file")
         
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')  # or 'gemini-pro'
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
         
         self.iteration_log = []
         self.max_iterations = 5
@@ -167,6 +167,46 @@ class ResearchAgent:
             json.dump(self.iteration_log, f, indent=2)
         print(f"📝 Logged iteration {self.current_iteration}")
 
+    # ============================================================
+    # 🆕 NEW FUNCTION: Write the final answer after research
+    # ============================================================
+    def write_final_answer(self, query: str, knowledge: list) -> str:
+        """
+        This is like asking the robot to write a school report
+        using all the notes it collected.
+        """
+        print(f"\n📝 Writing final answer...")
+        
+        # If no knowledge was found, say so
+        if not knowledge:
+            return "Sorry, I couldn't find any information about that topic."
+        
+        # Combine all the notes the robot found
+        all_notes = "\n\n".join(knowledge)
+        
+        # Ask Gemini (the brain) to write the report
+        prompt = f"""
+        You are a helpful research assistant.
+        
+        The user asked: "{query}"
+        
+        Here are the facts you found from web research:
+        {all_notes}
+        
+        Please write a clear, final answer to the user's question.
+        Use the facts above. Keep it short (3-5 sentences).
+        If you are not sure about something, say so.
+        """
+        
+        try:
+            response = self.model.generate_content(prompt)
+            answer = response.text
+            print(f"✅ Final answer written!")
+            return answer
+        except Exception as e:
+            print(f"❌ Could not write answer: {e}")
+            return "Sorry, I could not write the final answer."
+
     def run(self, query: str) -> Dict[str, Any]:
         print(f"\n🚀 Starting Research Agent")
         print(f"📌 Query: {query}")
@@ -184,12 +224,30 @@ class ResearchAgent:
             if state.get('success_condition_met', False):
                 print(f"\n🎯 Success condition met! Stopping.")
                 break
+        
+        # ============================================================
+        # 🆕 NEW: Write the final answer after loop ends!
+        # ============================================================
         print(f"\n{'='*50}")
         print(f"✅ RESEARCH COMPLETE")
         print(f"{'='*50}")
         print(f"Total iterations: {self.current_iteration}")
         print(f"Knowledge gathered: {len(state.get('knowledge', []))}")
         print(f"Log saved to: iteration_log.json")
+        
+        # 🆕 Write the final answer!
+        final_answer = self.write_final_answer(query, state.get('knowledge', []))
+        print(f"\n{'='*50}")
+        print(f"📋 FINAL ANSWER:")
+        print(f"{'='*50}")
+        print(final_answer)
+        
+        # Save the answer to a file too
+        state['final_answer'] = final_answer
+        with open('final_answer.txt', 'w') as f:
+            f.write(final_answer)
+        print(f"\n💾 Final answer saved to: final_answer.txt")
+        
         return state
 
 def main():
