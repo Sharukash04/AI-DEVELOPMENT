@@ -17,7 +17,8 @@ class ResearchAgent:
             raise ValueError("Please set GOOGLE_API_KEY in .env file")
         
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        # 🆕 FIXED: Updated model name!
+        self.model = genai.GenerativeModel('gemini-2.0-flash')
         
         self.iteration_log = []
         self.max_iterations = 5
@@ -28,11 +29,36 @@ class ResearchAgent:
             'fetch_page': self.fetch_page
         }
 
+    # 🆕 FIXED: Better web search with fallback
     def web_search(self, query: str) -> Dict[str, Any]:
         try:
+            # Try DuckDuckGo HTML version first (more reliable)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(
+                'https://html.duckduckgo.com/html/',
+                params={'q': query},
+                headers=headers,
+                timeout=15
+            )
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                results = []
+                for result in soup.find_all('a', class_='result__a'):
+                    parent = result.find_parent('div', class_='result__body')
+                    if parent:
+                        snippet = parent.find('a', class_='result__snippet')
+                        if snippet:
+                            results.append(snippet.get_text(strip=True))
+                if results:
+                    return {'success': True, 'results': results[:3], 'query': query}
+            
+            # Fallback: Try JSON API
             response = requests.get(
                 'https://api.duckduckgo.com/',
-                params={'q': query, 'format': 'json'}
+                params={'q': query, 'format': 'json'},
+                timeout=10
             )
             if response.status_code == 200:
                 data = response.json()
@@ -40,7 +66,9 @@ class ResearchAgent:
                 for item in data.get('RelatedTopics', [])[:3]:
                     if 'Text' in item:
                         results.append(item['Text'])
-                return {'success': True, 'results': results, 'query': query}
+                if results:
+                    return {'success': True, 'results': results, 'query': query}
+                    
         except Exception as e:
             return {'success': False, 'error': str(e), 'query': query}
         return {'success': False, 'error': 'No results found'}
@@ -167,24 +195,13 @@ class ResearchAgent:
             json.dump(self.iteration_log, f, indent=2)
         print(f"📝 Logged iteration {self.current_iteration}")
 
-    # ============================================================
-    # 🆕 NEW FUNCTION: Write the final answer after research
-    # ============================================================
     def write_final_answer(self, query: str, knowledge: list) -> str:
-        """
-        This is like asking the robot to write a school report
-        using all the notes it collected.
-        """
         print(f"\n📝 Writing final answer...")
-        
-        # If no knowledge was found, say so
         if not knowledge:
             return "Sorry, I couldn't find any information about that topic."
         
-        # Combine all the notes the robot found
         all_notes = "\n\n".join(knowledge)
         
-        # Ask Gemini (the brain) to write the report
         prompt = f"""
         You are a helpful research assistant.
         
@@ -225,9 +242,6 @@ class ResearchAgent:
                 print(f"\n🎯 Success condition met! Stopping.")
                 break
         
-        # ============================================================
-        # 🆕 NEW: Write the final answer after loop ends!
-        # ============================================================
         print(f"\n{'='*50}")
         print(f"✅ RESEARCH COMPLETE")
         print(f"{'='*50}")
@@ -235,14 +249,12 @@ class ResearchAgent:
         print(f"Knowledge gathered: {len(state.get('knowledge', []))}")
         print(f"Log saved to: iteration_log.json")
         
-        # 🆕 Write the final answer!
         final_answer = self.write_final_answer(query, state.get('knowledge', []))
         print(f"\n{'='*50}")
         print(f"📋 FINAL ANSWER:")
         print(f"{'='*50}")
         print(final_answer)
         
-        # Save the answer to a file too
         state['final_answer'] = final_answer
         with open('final_answer.txt', 'w') as f:
             f.write(final_answer)
