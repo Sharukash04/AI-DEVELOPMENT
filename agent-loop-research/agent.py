@@ -1,9 +1,10 @@
 import os
 import json
 import re
+import time
 from datetime import datetime
 from dotenv import load_dotenv
-import google.generativeai as genai
+from groq import Groq
 import requests
 from bs4 import BeautifulSoup
 from typing import Dict, Any
@@ -12,13 +13,12 @@ load_dotenv()
 
 class ResearchAgent:
     def __init__(self):
-        api_key = os.getenv('GOOGLE_API_KEY')
+        api_key = os.getenv('GROQ_API_KEY')
         if not api_key:
-            raise ValueError("Please set GOOGLE_API_KEY in .env file")
+            raise ValueError("Please set GROQ_API_KEY in .env file")
         
-        genai.configure(api_key=api_key)
-        # 🆕 FIXED: Updated model name!
-        self.model = genai.GenerativeModel('gemini-2.0-flash')
+        self.client = Groq(api_key=api_key)
+        self.model = "llama-3.3-70b-versatile"
         
         self.iteration_log = []
         self.max_iterations = 5
@@ -29,10 +29,9 @@ class ResearchAgent:
             'fetch_page': self.fetch_page
         }
 
-    # 🆕 FIXED: Better web search with fallback
     def web_search(self, query: str) -> Dict[str, Any]:
+        """Search the web using DuckDuckGo"""
         try:
-            # Try DuckDuckGo HTML version first (more reliable)
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
@@ -53,27 +52,13 @@ class ResearchAgent:
                             results.append(snippet.get_text(strip=True))
                 if results:
                     return {'success': True, 'results': results[:3], 'query': query}
-            
-            # Fallback: Try JSON API
-            response = requests.get(
-                'https://api.duckduckgo.com/',
-                params={'q': query, 'format': 'json'},
-                timeout=10
-            )
-            if response.status_code == 200:
-                data = response.json()
-                results = []
-                for item in data.get('RelatedTopics', [])[:3]:
-                    if 'Text' in item:
-                        results.append(item['Text'])
-                if results:
-                    return {'success': True, 'results': results, 'query': query}
                     
         except Exception as e:
             return {'success': False, 'error': str(e), 'query': query}
         return {'success': False, 'error': 'No results found'}
 
     def fetch_page(self, url: str) -> Dict[str, Any]:
+        """Fetch and extract text from a webpage"""
         try:
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
@@ -89,7 +74,31 @@ class ResearchAgent:
             return {'success': False, 'error': str(e), 'url': url}
         return {'success': False, 'error': 'Failed to fetch page'}
 
+    def call_llm(self, prompt: str) -> str:
+        """Call Groq LLM with retry on rate limit"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful AI research agent. Respond ONLY with valid JSON when asked for a plan."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=500
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                print(f"⚠️ LLM attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)  # Wait before retry
+                else:
+                    return ""
+        return ""
+
     def perceive(self, query: str) -> Dict[str, Any]:
+        """Stage 1: Perceive - understand the query"""
         print(f"\n🤔 Perceiving: {query}")
         return {
             'query': query,
@@ -99,23 +108,23 @@ class ResearchAgent:
         }
 
     def plan(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Stage 2: Plan - ask LLM what to do next"""
         print(f"\n🧠 Planning iteration {self.current_iteration + 1}")
         prompt = f"""
-        You are an AI research agent. Current query: "{state['query']}"
-        You have these tools: web_search, fetch_page
-        You know so far: {state.get('knowledge', [])}
-        
-        Plan your next action:
-        1. Which tool to use? (web_search or fetch_page)
-        2. What parameters?
-        3. Why this action?
-        
-        Respond in **valid JSON** with keys: action, parameters, reasoning.
-        Example: {{"action": "web_search", "parameters": {{"query": "climate change solutions"}}, "reasoning": "Need more sources"}}
-        """
+You are an AI research agent. Current query: "{state['query']}"
+You have these tools: web_search, fetch_page
+You know so far: {state.get('knowledge', [])}
+
+Plan your next action:
+1. Which tool to use? (web_search or fetch_page)
+2. What parameters?
+3. Why this action?
+
+Respond in **valid JSON** with keys: action, parameters, reasoning.
+Example: {{"action": "web_search", "parameters": {{"query": "climate change solutions"}}, "reasoning": "Need more sources"}}
+"""
         try:
-            response = self.model.generate_content(prompt)
-            raw_output = response.text
+            raw_output = self.call_llm(prompt)
             json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
             if json_match:
                 plan = json.loads(json_match.group())
@@ -123,23 +132,25 @@ class ResearchAgent:
                 plan = {
                     'action': 'web_search',
                     'parameters': {'query': state['query']},
-                    'reasoning': 'Default (no JSON)'
+                    'reasoning': 'Default (no JSON found)'
                 }
         except Exception as e:
-            print(f"⚠️ Gemini error: {e}")
+            print(f"⚠️ Plan error: {e}")
             plan = {
                 'action': 'web_search',
                 'parameters': {'query': state['query']},
-                'reasoning': f'Fallback: {str(e)}'
+                'reasoning': f'Fallback due to error: {str(e)}'
             }
         state['plan'] = plan
         return state
 
     def act(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Stage 3: Act - execute the planned action"""
         print(f"\n⚡ Executing: {state['plan'].get('action')}")
         plan = state['plan']
         action = plan.get('action')
         params = plan.get('parameters', {})
+        
         if action in self.tools:
             try:
                 result = self.tools[action](**params)
@@ -149,6 +160,7 @@ class ResearchAgent:
                 else:
                     print(f"⚠️ Tool failed: {result.get('error', 'Unknown error')}")
                     state['last_action_result'] = result
+                    # 🆕 ERROR RECOVERY: Mark error but don't crash
                     state['error_handled'] = True
             except Exception as e:
                 print(f"❌ Tool exception: {e}")
@@ -160,18 +172,27 @@ class ResearchAgent:
         return state
 
     def observe(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Stage 4: Observe - process results"""
         print(f"\n👀 Observing results")
         result = state.get('last_action_result', {})
+        
         if result.get('success'):
             if state['plan'].get('action') == 'web_search' and result.get('results'):
                 state['knowledge'].extend(result['results'])
+                print(f"📚 Added {len(result['results'])} facts to knowledge")
             elif state['plan'].get('action') == 'fetch_page' and result.get('content'):
                 state['knowledge'].append(result['content'][:200])
+                print(f"📄 Added page content to knowledge")
+        else:
+            # 🆕 ERROR RECOVERY: Log failure but continue
+            print(f"🔄 Tool failed, will retry with different approach next iteration")
+            
         state['success_condition_met'] = self.check_success(state)
         self.log_iteration(state)
         return state
 
     def check_success(self, state: Dict[str, Any]) -> bool:
+        """Check if we have enough information to answer"""
         if len(state.get('knowledge', [])) >= 3:
             return True
         if state.get('last_action_result', {}).get('success', False) and 'content' in state['last_action_result']:
@@ -179,6 +200,7 @@ class ResearchAgent:
         return False
 
     def log_iteration(self, state: Dict[str, Any]):
+        """Log every iteration to JSON file"""
         log_entry = {
             'timestamp': datetime.now().isoformat(),
             'iteration': self.current_iteration,
@@ -196,6 +218,7 @@ class ResearchAgent:
         print(f"📝 Logged iteration {self.current_iteration}")
 
     def write_final_answer(self, query: str, knowledge: list) -> str:
+        """Write final answer using gathered knowledge"""
         print(f"\n📝 Writing final answer...")
         if not knowledge:
             return "Sorry, I couldn't find any information about that topic."
@@ -203,21 +226,19 @@ class ResearchAgent:
         all_notes = "\n\n".join(knowledge)
         
         prompt = f"""
-        You are a helpful research assistant.
-        
-        The user asked: "{query}"
-        
-        Here are the facts you found from web research:
-        {all_notes}
-        
-        Please write a clear, final answer to the user's question.
-        Use the facts above. Keep it short (3-5 sentences).
-        If you are not sure about something, say so.
-        """
-        
+You are a helpful research assistant.
+
+The user asked: "{query}"
+
+Here are the facts you found from web research:
+{all_notes}
+
+Please write a clear, final answer to the user's question.
+Use the facts above. Keep it short (3-5 sentences).
+If you are not sure about something, say so.
+"""
         try:
-            response = self.model.generate_content(prompt)
-            answer = response.text
+            answer = self.call_llm(prompt)
             print(f"✅ Final answer written!")
             return answer
         except Exception as e:
@@ -225,23 +246,31 @@ class ResearchAgent:
             return "Sorry, I could not write the final answer."
 
     def run(self, query: str) -> Dict[str, Any]:
+        """Main agent loop"""
         print(f"\n🚀 Starting Research Agent")
         print(f"📌 Query: {query}")
         print(f"🔄 Max iterations: {self.max_iterations}\n")
+        
         state = {'query': query}
+        
         while self.current_iteration < self.max_iterations:
             print(f"\n{'='*50}")
             print(f"ITERATION {self.current_iteration + 1}")
             print(f"{'='*50}")
+            
+            # The 4 stages of the agent loop
             state = self.perceive(query)
             state = self.plan(state)
             state = self.act(state)
             state = self.observe(state)
+            
             self.current_iteration += 1
+            
             if state.get('success_condition_met', False):
                 print(f"\n🎯 Success condition met! Stopping.")
                 break
         
+        # Final answer
         print(f"\n{'='*50}")
         print(f"✅ RESEARCH COMPLETE")
         print(f"{'='*50}")
@@ -263,20 +292,23 @@ class ResearchAgent:
         return state
 
 def main():
-    print("🤖 AI Research Agent")
+    print("🤖 AI Research Agent (Powered by Groq)")
     print("=" * 40)
     try:
         agent = ResearchAgent()
     except ValueError as e:
         print(f"Error: {e}")
         return
+    
     print("\nExample queries:")
-    print("1. Latest developments in AI")
-    print("2. Climate change solutions")
-    print("3. Space exploration news")
+    print("1. Who is APJ Abdul Kalam?")
+    print("2. What are the benefits of renewable energy?")
+    print("3. Latest developments in AI")
+    
     query = input("\nEnter your research query: ").strip()
     if not query:
-        query = "Latest developments in artificial intelligence"
+        query = "Who is APJ Abdul Kalam?"
+    
     agent.run(query)
 
 if __name__ == "__main__":
