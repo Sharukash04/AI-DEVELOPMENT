@@ -30,7 +30,50 @@ class ResearchAgent:
         }
 
     def web_search(self, query: str) -> Dict[str, Any]:
-        """Search the web using DuckDuckGo"""
+        """Search using multiple fallback methods"""
+        print(f"   🔍 Searching for: {query}")
+        
+        # Method 1: Try DuckDuckGo Lite (less blocking)
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+            }
+            response = requests.get(
+                'https://lite.duckduckgo.com/lite/',
+                params={'q': query},
+                headers=headers,
+                timeout=15
+            )
+            print(f"   📡 Status: {response.status_code}")
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                results = []
+                
+                # DuckDuckGo Lite results
+                for link in soup.find_all('a', class_='result-link'):
+                    text = link.get_text(strip=True)
+                    if text and len(text) > 20:
+                        results.append(text)
+                
+                # Also try result snippets
+                for snippet in soup.find_all('td', class_='result-snippet'):
+                    text = snippet.get_text(strip=True)
+                    if text and len(text) > 20:
+                        results.append(text)
+                
+                if results:
+                    print(f"   ✅ Found {len(results)} results!")
+                    return {'success': True, 'results': results[:3], 'query': query}
+                else:
+                    print(f"   ⚠️ No results parsed from page")
+                    
+        except Exception as e:
+            print(f"   ❌ Method 1 failed: {e}")
+        
+        # Method 2: Try regular DuckDuckGo HTML
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -49,18 +92,37 @@ class ResearchAgent:
                     if parent:
                         snippet = parent.find('a', class_='result__snippet')
                         if snippet:
-                            results.append(snippet.get_text(strip=True))
+                            text = snippet.get_text(strip=True)
+                            if len(text) > 10:
+                                results.append(text)
                 if results:
+                    print(f"   ✅ Found {len(results)} results (Method 2)!")
                     return {'success': True, 'results': results[:3], 'query': query}
-                    
         except Exception as e:
-            return {'success': False, 'error': str(e), 'query': query}
-        return {'success': False, 'error': 'No results found'}
+            print(f"   ❌ Method 2 failed: {e}")
+        
+        # Method 3: Try Wikipedia API as fallback
+        try:
+            print(f"   🔄 Trying Wikipedia fallback...")
+            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{query.replace(' ', '_')}"
+            response = requests.get(wiki_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                extract = data.get('extract', '')
+                if extract:
+                    print(f"   ✅ Wikipedia found info!")
+                    return {'success': True, 'results': [extract[:500]], 'query': query}
+        except Exception as e:
+            print(f"   ❌ Wikipedia failed: {e}")
+        
+        print(f"   ❌ All search methods failed")
+        return {'success': False, 'error': 'No results found from any source', 'query': query}
 
     def fetch_page(self, url: str) -> Dict[str, Any]:
         """Fetch and extract text from a webpage"""
         try:
-            response = requests.get(url, timeout=10)
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
                 for script in soup(["script", "style"]):
@@ -79,6 +141,7 @@ class ResearchAgent:
         max_retries = 3
         for attempt in range(max_retries):
             try:
+                print(f"   🤖 Calling LLM (attempt {attempt + 1})...")
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -88,12 +151,15 @@ class ResearchAgent:
                     temperature=0.7,
                     max_tokens=500
                 )
-                return response.choices[0].message.content
+                result = response.choices[0].message.content
+                print(f"   ✅ LLM responded!")
+                return result
             except Exception as e:
-                print(f"⚠️ LLM attempt {attempt + 1} failed: {e}")
+                print(f"   ⚠️ LLM attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
-                    time.sleep(2)  # Wait before retry
+                    time.sleep(2)
                 else:
+                    print(f"   ❌ LLM failed after {max_retries} attempts")
                     return ""
         return ""
 
@@ -110,8 +176,7 @@ class ResearchAgent:
     def plan(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Stage 2: Plan - ask LLM what to do next"""
         print(f"\n🧠 Planning iteration {self.current_iteration + 1}")
-        prompt = f"""
-You are an AI research agent. Current query: "{state['query']}"
+        prompt = f"""You are an AI research agent. Current query: "{state['query']}"
 You have these tools: web_search, fetch_page
 You know so far: {state.get('knowledge', [])}
 
@@ -121,21 +186,25 @@ Plan your next action:
 3. Why this action?
 
 Respond in **valid JSON** with keys: action, parameters, reasoning.
-Example: {{"action": "web_search", "parameters": {{"query": "climate change solutions"}}, "reasoning": "Need more sources"}}
-"""
+Example: {{"action": "web_search", "parameters": {{"query": "climate change solutions"}}, "reasoning": "Need more sources"}}"""
+        
         try:
             raw_output = self.call_llm(prompt)
+            print(f"   📝 Raw LLM output: {raw_output[:200]}...")
+            
             json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
             if json_match:
                 plan = json.loads(json_match.group())
+                print(f"   ✅ Parsed plan: {plan}")
             else:
+                print(f"   ⚠️ No JSON found, using default")
                 plan = {
                     'action': 'web_search',
                     'parameters': {'query': state['query']},
                     'reasoning': 'Default (no JSON found)'
                 }
         except Exception as e:
-            print(f"⚠️ Plan error: {e}")
+            print(f"   ⚠️ Plan error: {e}")
             plan = {
                 'action': 'web_search',
                 'parameters': {'query': state['query']},
@@ -156,14 +225,13 @@ Example: {{"action": "web_search", "parameters": {{"query": "climate change solu
                 result = self.tools[action](**params)
                 if result.get('success', False):
                     state['last_action_result'] = result
-                    print(f"✅ Action successful: {action}")
+                    print(f"   ✅ Action successful: {action}")
                 else:
-                    print(f"⚠️ Tool failed: {result.get('error', 'Unknown error')}")
+                    print(f"   ⚠️ Tool failed: {result.get('error', 'Unknown error')}")
                     state['last_action_result'] = result
-                    # 🆕 ERROR RECOVERY: Mark error but don't crash
                     state['error_handled'] = True
             except Exception as e:
-                print(f"❌ Tool exception: {e}")
+                print(f"   ❌ Tool exception: {e}")
                 state['last_action_result'] = {'success': False, 'error': str(e)}
                 state['error_handled'] = True
         else:
@@ -179,21 +247,21 @@ Example: {{"action": "web_search", "parameters": {{"query": "climate change solu
         if result.get('success'):
             if state['plan'].get('action') == 'web_search' and result.get('results'):
                 state['knowledge'].extend(result['results'])
-                print(f"📚 Added {len(result['results'])} facts to knowledge")
+                print(f"   📚 Added {len(result['results'])} facts to knowledge")
             elif state['plan'].get('action') == 'fetch_page' and result.get('content'):
                 state['knowledge'].append(result['content'][:200])
-                print(f"📄 Added page content to knowledge")
+                print(f"   📄 Added page content to knowledge")
         else:
-            # 🆕 ERROR RECOVERY: Log failure but continue
-            print(f"🔄 Tool failed, will retry with different approach next iteration")
+            print(f"   🔄 Tool failed, will retry with different approach next iteration")
             
         state['success_condition_met'] = self.check_success(state)
         self.log_iteration(state)
         return state
 
     def check_success(self, state: Dict[str, Any]) -> bool:
-        """Check if we have enough information to answer"""
+        """Check if we have enough information"""
         if len(state.get('knowledge', [])) >= 3:
+            print(f"   🎯 Success: Have {len(state['knowledge'])} facts!")
             return True
         if state.get('last_action_result', {}).get('success', False) and 'content' in state['last_action_result']:
             return True
@@ -215,7 +283,7 @@ Example: {{"action": "web_search", "parameters": {{"query": "climate change solu
         self.iteration_log.append(log_entry)
         with open('iteration_log.json', 'w') as f:
             json.dump(self.iteration_log, f, indent=2)
-        print(f"📝 Logged iteration {self.current_iteration}")
+        print(f"   📝 Logged iteration {self.current_iteration}")
 
     def write_final_answer(self, query: str, knowledge: list) -> str:
         """Write final answer using gathered knowledge"""
@@ -225,8 +293,7 @@ Example: {{"action": "web_search", "parameters": {{"query": "climate change solu
         
         all_notes = "\n\n".join(knowledge)
         
-        prompt = f"""
-You are a helpful research assistant.
+        prompt = f"""You are a helpful research assistant.
 
 The user asked: "{query}"
 
@@ -235,14 +302,14 @@ Here are the facts you found from web research:
 
 Please write a clear, final answer to the user's question.
 Use the facts above. Keep it short (3-5 sentences).
-If you are not sure about something, say so.
-"""
+If you are not sure about something, say so."""
+        
         try:
             answer = self.call_llm(prompt)
-            print(f"✅ Final answer written!")
+            print(f"   ✅ Final answer written!")
             return answer
         except Exception as e:
-            print(f"❌ Could not write answer: {e}")
+            print(f"   ❌ Could not write answer: {e}")
             return "Sorry, I could not write the final answer."
 
     def run(self, query: str) -> Dict[str, Any]:
@@ -254,11 +321,10 @@ If you are not sure about something, say so.
         state = {'query': query}
         
         while self.current_iteration < self.max_iterations:
-            print(f"\n{'='*50}")
+            print(f"\n{'='*60}")
             print(f"ITERATION {self.current_iteration + 1}")
-            print(f"{'='*50}")
+            print(f"{'='*60}")
             
-            # The 4 stages of the agent loop
             state = self.perceive(query)
             state = self.plan(state)
             state = self.act(state)
@@ -271,17 +337,17 @@ If you are not sure about something, say so.
                 break
         
         # Final answer
-        print(f"\n{'='*50}")
+        print(f"\n{'='*60}")
         print(f"✅ RESEARCH COMPLETE")
-        print(f"{'='*50}")
+        print(f"{'='*60}")
         print(f"Total iterations: {self.current_iteration}")
         print(f"Knowledge gathered: {len(state.get('knowledge', []))}")
         print(f"Log saved to: iteration_log.json")
         
         final_answer = self.write_final_answer(query, state.get('knowledge', []))
-        print(f"\n{'='*50}")
+        print(f"\n{'='*60}")
         print(f"📋 FINAL ANSWER:")
-        print(f"{'='*50}")
+        print(f"{'='*60}")
         print(final_answer)
         
         state['final_answer'] = final_answer
@@ -293,7 +359,7 @@ If you are not sure about something, say so.
 
 def main():
     print("🤖 AI Research Agent (Powered by Groq)")
-    print("=" * 40)
+    print("=" * 50)
     try:
         agent = ResearchAgent()
     except ValueError as e:
@@ -303,7 +369,7 @@ def main():
     print("\nExample queries:")
     print("1. Who is APJ Abdul Kalam?")
     print("2. What are the benefits of renewable energy?")
-    print("3. Latest developments in AI")
+    print("3. What is machine learning?")
     
     query = input("\nEnter your research query: ").strip()
     if not query:
