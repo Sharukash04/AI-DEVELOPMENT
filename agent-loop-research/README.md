@@ -1,31 +1,57 @@
-# AI Research Agent - Cycle 1: Agent Loop
+# AI Research Agent - Iterative Web Research (UC2)
 
 ## Problem Statement
-An iterative web research agent that autonomously searches the web, fetches pages, and gathers information to answer a research question.
 
-## Use Case
-UC2: Iterative Web Research Agent
+This project implements an **Iterative Web Research Agent** (Use Case 2) as part of the Agent Loop topic in the AI Development Preparation assignment. Given a research question, the agent autonomously:
 
-## Setup Instructions
-1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Create `.env` file with `GOOGLE_API_KEY=your_key_here`
-4. Run: `python agent.py`
+1. **Searches the web** for relevant information
+2. **Fetches pages** from top results
+3. **Judges** if the gathered information is sufficient
+4. **Refines the query** or **stops** and produces a cited summary
+
+The agent follows an explicit **Perceive → Plan → Act → Observe** loop with a real LLM (Groq/Llama) driving the planning stage.
+
+---
 
 ## Architecture
-[Diagram to be added]
 
-## Sample Input-Output
-[To be added after testing]
+![Architecture](architecture.png)
+
+### Agent Loop Stages
+
+| Stage | Description |
+|-------|-------------|
+| **Perceive** | Understands the user's research query |
+| **Plan** | Calls LLM to decide next action (web_search or fetch_page) |
+| **Act** | Executes the chosen tool/function |
+| **Observe** | Processes results, updates knowledge, checks success |
+
+### Tools Available
+- `web_search` — Searches DuckDuckGo for relevant snippets
+- `fetch_page` — Fetches and extracts text from a webpage
+
+### Termination Rules
+- **Max iterations**: 5 (hard limit)
+- **Success condition**: Gathered 3+ facts OR successfully fetched a full page
+
+---
 
 ## Technologies Used
-- Python 3.x
-- Google Gemini API
-- DuckDuckGo API (for web search)
-- BeautifulSoup (for web scraping)
 
-## Status
-✅ Working agent loop with Gemini integration
-✅ Web search and page fetch tools
-✅ Iteration logging
-✅ Error handling
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.14 |
+| LLM | Groq API (llama-3.3-70b-versatile) |
+| Web Search | DuckDuckGo (lite + HTML fallback) |
+| Web Scraping | BeautifulSoup4 |
+| HTTP Requests | requests |
+| Environment | python-dotenv |
+
+---
+
+## Setup Instructions
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/Sharukash04/AI-DEVELOPMENT.git;
+cd agent-loop-research
