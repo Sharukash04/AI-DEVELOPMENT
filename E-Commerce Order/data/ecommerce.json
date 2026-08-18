@@ -1,0 +1,45 @@
+{
+    "products": [
+        {
+            "id": "P001",
+            "name": "Wireless Mouse",
+            "price": 599,
+            "stock": 25
+        },
+        {
+            "id": "P002",
+            "name": "Mechanical Keyboard",
+            "price": 2499,
+            "stock": 10
+        },
+        {
+            "id": "P003",
+            "name": "USB-C Cable",
+            "price": 399,
+            "stock": 50
+        }
+    ],
+    "orders": [
+        {
+            "id": "ORD001",
+            "customer": "Arun",
+            "product_id": "P001",
+            "quantity": 2,
+            "status": "Shipped"
+        },
+        {
+            "id": "ORD002",
+            "customer": "Priya",
+            "product_id": "P002",
+            "quantity": 1,
+            "status": "Delivered"
+        },
+        {
+            "id": "ORD003",
+            "customer": "Rahul",
+            "product_id": "P003",
+            "quantity": 3,
+            "status": "Processing"
+        }
+    ]
+}

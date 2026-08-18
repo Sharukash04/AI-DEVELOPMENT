@@ -1,72 +1,61 @@
-# AI Development – Cycle 2: E-Commerce
+# E-Commerce Order MCP Server
+
+## AI Development - Cycle 2
+
+This project is developed as part of the AI Development Preparation assignment.
 
 ## Cycle Information
 
 - Cycle: 2
-- Topic: E-Commerce
-- Duration: 17 August 2026 – 31 August 2026
-- Focus: Artificial Intelligence in E-Commerce
+- Topic: MCP Server
+- Use Case: E-Commerce Order MCP Server
+- Duration: Day 16 - Day 30
+- Deadline: 27 August 2026
+- Status: Compulsory
 
-## Objective
+## Problem Statement
 
-The objective of this cycle is to understand how Artificial Intelligence can be applied to E-Commerce and develop a small AI-based solution for an E-Commerce use case.
+The purpose of this project is to build an MCP server for an E-Commerce order system.
 
-## What I Will Learn
+The server will provide tools that allow an MCP client to work with mock E-Commerce data.
 
-- E-Commerce concepts
-- AI applications in E-Commerce
-- Dataset preparation
-- Data preprocessing
-- Exploratory Data Analysis
-- Machine Learning
-- Model training
-- Model evaluation
-- AI application development
+The selected use case provides three main operations:
 
-## Possible AI Use Cases
+- Track an order
+- Check product stock
+- Initiate a return
 
-Some possible AI applications that will be explored during this cycle are:
+The project will use a local mock product and order database.
 
-- Product Recommendation
-- Customer Segmentation
-- Product Classification
-- Review Sentiment Analysis
-- Sales Prediction
-- Fraud Detection
+## Selected Use Case
 
-## Development Approach
+### UC4 - E-Commerce Order MCP Server
 
-1. Understand the E-Commerce domain
-2. Explore AI use cases
-3. Select an AI problem
-4. Find and understand a suitable dataset
-5. Prepare and preprocess the data
-6. Build a baseline AI/ML model
-7. Train and evaluate the model
-8. Improve the solution
-9. Develop a simple AI application
-10. Document the final result
+The selected use case is the E-Commerce Order MCP Server from the given AI Development assignment.
 
-## Cycle Progress
+The server will expose the following tools:
 
-### Day 1 – E-Commerce Domain Analysis
-- Started Cycle 2
-- Selected E-Commerce as the domain
-- Explored AI applications in E-Commerce
-- Identified possible AI problems
+1. `track_order`
+2. `check_stock`
+3. `initiate_return`
 
-### Day 2
-- To be completed
+The data will be stored locally using JSON.
 
-### Day 3
-- To be completed
+## Planned Architecture
 
-### Day 4
-- To be completed
-
-### Day 5
-- To be completed
-
-## Final Goal
-
-By the end of Cycle 2, I aim to develop a working AI-based solution for a selected E-Commerce problem and understand the complete development process from data to AI application.
+```text
+MCP Client
+    |
+    | MCP
+    v
+E-Commerce MCP Server
+    |
+    +---- track_order
+    |
+    +---- check_stock
+    |
+    +---- initiate_return
+    |
+    v
+Mock E-Commerce Data
+(JSON)
