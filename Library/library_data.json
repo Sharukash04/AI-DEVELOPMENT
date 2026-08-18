@@ -1,0 +1,9 @@
+{
+  "books": [
+    {"id": "B001", "title": "Python Crash Course", "author": "Eric Matthes", "available": true},
+    {"id": "B002", "title": "Deep Learning", "author": "Ian Goodfellow", "available": false},
+    {"id": "B003", "title": "AI: A Modern Approach", "author": "Norvig", "available": true},
+    {"id": "B004", "title": "Clean Code", "author": "Robert Martin", "available": true}
+  ],
+  "reservations": []
+}
