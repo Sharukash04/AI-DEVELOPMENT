@@ -1,177 +1,106 @@
 import json
-import os
-from datetime import datetime
-import asyncio
+import logging
+import sys
+from pathlib import Path
+from mcp.server.fastmcp import FastMCP
 
-from mcp.server import Server, NotificationOptions
-from mcp.server.models import InitializationOptions
-import mcp.types as types
-import mcp.server.stdio
+# Setup logging ONLY to sys.stderr (Crucial: stdout breaks stdio MCP transport)
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
-# ============================================
-# Data Store
-# ============================================
-DATA_FILE = "library_data.json"
+DATA_FILE = Path(__file__).parent / "library_data.json"
 
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        default = {
-            "books": [
-                {"id": "B001", "title": "Python Crash Course", "author": "Eric Matthes", "available": True},
-                {"id": "B002", "title": "Deep Learning", "author": "Ian Goodfellow", "available": False},
-                {"id": "B003", "title": "AI: A Modern Approach", "author": "Norvig", "available": True},
-                {"id": "B004", "title": "Clean Code", "author": "Robert Martin", "available": True},
-            ],
-            "reservations": []
-        }
-        with open(DATA_FILE, "w") as f:
-            json.dump(default, f, indent=2)
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+# Initialize FastMCP Server
+mcp = FastMCP("Campus Library MCP Server")
 
-def save_data(data):
+def log_audit(tool_name: str, args: dict):
+    """Audit logger requirement: logs timestamp and sanitized arguments."""
+    sanitized_args = {
+        k: ("***" if "pass" in k.lower() or "token" in k.lower() else v)
+        for k, v in args.items()
+    }
+    logging.info(f"AUDIT LOG | Tool Invoked: '{tool_name}' | Arguments: {json.dumps(sanitized_args)}")
+
+def load_data() -> dict:
+    if DATA_FILE.exists():
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {"books": []}
+
+def save_data(data: dict):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# ============================================
-# Create Server
-# ============================================
-app = Server("campus-library")
-
-# ============================================
-# Tools
-# ============================================
-
-@app.list_tools()
-async def list_tools() -> list[types.Tool]:
-    return [
-        types.Tool(
-            name="search_book",
-            description="Search for books by title (partial match)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Title to search for"}
-                },
-                "required": ["title"],
-            },
-        ),
-        types.Tool(
-            name="check_availability",
-            description="Check if a specific book is available",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "book_id": {"type": "string", "description": "Book ID (e.g., B001)"}
-                },
-                "required": ["book_id"],
-            },
-        ),
-        types.Tool(
-            name="reserve_book",
-            description="Reserve an available book for a student",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "book_id": {"type": "string", "description": "Book ID"},
-                    "student_name": {"type": "string", "description": "Student's full name"}
-                },
-                "required": ["book_id", "student_name"],
-            },
-        ),
-    ]
-
-@app.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+@mcp.tool()
+def search_book(query: str) -> list[dict]:
+    """Search for books in the campus library catalog by title or author.
+    
+    Args:
+        query: Search keyword for title or author name.
+    """
+    log_audit("search_book", {"query": query})
     data = load_data()
-
-    if name == "search_book":
-        title = arguments.get("title", "")
-        results = []
-        for book in data["books"]:
-            if title.lower() in book["title"].lower():
-                status = "Available" if book["available"] else "Checked out"
-                results.append(f"{book['id']}: {book['title']} by {book['author']} ({status})")
-        if not results:
-            return [types.TextContent(type="text", text="No books found.")]
-        return [types.TextContent(type="text", text="\n".join(results))]
-
-    elif name == "check_availability":
-        book_id = arguments.get("book_id")
-        for book in data["books"]:
-            if book["id"].lower() == book_id.lower():
-                status = "Available" if book["available"] else "Checked out"
-                return [types.TextContent(type="text", text=f"Book {book_id}: {book['title']} – {status}")]
-        return [types.TextContent(type="text", text=f"Book '{book_id}' not found.")]
-
-    elif name == "reserve_book":
-        book_id = arguments.get("book_id")
-        student = arguments.get("student_name")
-        for book in data["books"]:
-            if book["id"].lower() == book_id.lower():
-                if not book["available"]:
-                    return [types.TextContent(type="text", text=f"Book '{book_id}' is not available.")]
-                book["available"] = False
-                data["reservations"].append({
-                    "book_id": book_id,
-                    "student": student,
-                    "timestamp": datetime.now().isoformat()
-                })
-                save_data(data)
-                return [types.TextContent(type="text", text=f"✅ '{book['title']}' reserved for {student}.")]
-        return [types.TextContent(type="text", text=f"Book '{book_id}' not found.")]
-
-    else:
-        return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
-
-# ============================================
-# Resources
-# ============================================
-
-@app.list_resources()
-async def list_resources() -> list[types.Resource]:
+    q = query.lower()
     return [
-        types.Resource(
-            uri="catalog://books",
-            name="Library Catalog",
-            description="List of all books with availability",
-            mimeType="text/plain",
-        ),
+        b for b in data["books"]
+        if q in b["title"].lower() or q in b["author"].lower()
     ]
 
-@app.read_resource()
-async def read_resource(uri: str) -> str:
-    if uri == "catalog://books":
-        data = load_data()
-        output = "📚 Library Catalog\n" + "="*30 + "\n"
-        for b in data["books"]:
-            status = "✅ Available" if b["available"] else "❌ Checked out"
-            output += f"{b['id']}: {b['title']} – {b['author']} [{status}]\n"
-        return output
-    raise ValueError(f"Unknown resource: {uri}")
+@mcp.tool()
+def check_availability(book_id: str) -> dict:
+    """Check status and reservation state of a specific book by ID.
+    
+    Args:
+        book_id: Unique identifier for the book (e.g., 'B001').
+    """
+    log_audit("check_availability", {"book_id": book_id})
+    data = load_data()
+    for book in data["books"]:
+        if book["id"] == book_id:
+            return {
+                "book_id": book["id"],
+                "title": book["title"],
+                "available": book["available"],
+                "reserved_by": book["reserved_by"]
+            }
+    return {"error": "Book not found", "book_id": book_id}
 
-# ============================================
-# Run
-# ============================================
-async def main():
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="campus-library",
-                server_version="1.0.0",
-                capabilities=app.get_capabilities(
-                    notification_options=NotificationOptions(),  # FIXED!
-                    experimental_capabilities={},
-                ),
-            ),
-        )
+@mcp.tool()
+def reserve_book(book_id: str, student_name: str) -> dict:
+    """Reserve an available book for a specific student.
+    
+    Args:
+        book_id: ID of the book to reserve.
+        student_name: Full name of the requesting student.
+    """
+    log_audit("reserve_book", {"book_id": book_id, "student_name": student_name})
+    data = load_data()
+    for book in data["books"]:
+        if book["id"] == book_id:
+            if not book["available"]:
+                return {
+                    "success": False,
+                    "message": f"Book '{book['title']}' is already reserved by {book['reserved_by']}."
+                }
+            book["available"] = False
+            book["reserved_by"] = student_name
+            save_data(data)
+            return {
+                "success": True,
+                "message": f"Book '{book['title']}' successfully reserved for {student_name}."
+            }
+    return {"success": False, "message": f"Book ID '{book_id}' not found."}
+
+@mcp.resource("catalog://books")
+def get_catalog() -> str:
+    """Retrieve the complete current catalog of books as JSON."""
+    logging.info("AUDIT LOG | Resource Requested: catalog://books")
+    data = load_data()
+    return json.dumps(data["books"], indent=2)
 
 if __name__ == "__main__":
-    print("📚 Campus Library MCP Server")
-    print("="*40)
-    print("Tools: search_book, check_availability, reserve_book")
-    print("Resource: catalog://books")
-    print("="*40)
-    asyncio.run(main())
+    mcp.run()
